@@ -1,0 +1,172 @@
+Author: David Ayeke
+Student ID: 431662
+project1: sort_thresh
+
+files modified: sort_thresh.c, test.sh, Makefile
+
+Run make to compile all the binaries.
+Run make test to test sort_thresh 10 times with 10,000 records.
+Alternatively run ./test.sh <num_test> <num_record> for manual testing
+
+What sort_thresh does,
+Sorts records from a file made with generate first by key then by data.
+
+project1: xv6
+
+To create the sys_runnable systemcall, I had to create the function sys_runnable
+in sys_proc.c and procrunnable in proc.c. procrunnable iterates through the
+process table and outputs the number of processes in the runnable state.
+sys_proc calls procrunnable. From there I had to bind the number 22 to the
+function sys_proc to implement the systemcall. This meant modifications to
+defs.h, syscall.c, syscall.h. I also had to edit user.h, and usys.S so that
+userspace processes could make the sysystemcall.
+
+Changes made: also found in xv6_modified_files
+defs.h, Makefile, proc.c, syscall.c, syscall.h, sysproc.c, user.h, usys.S, ps.c
+
+diff --git a/Makefile b/Makefile
+index a635b64..d92afb6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -32,7 +32,7 @@ OBJS = \
+ # TOOLPREFIX = i386-jos-elf
+
+ # Using native tools (e.g., on X86 Linux)
+-#TOOLPREFIX =
++#TOOLPREFIX =
+
+ # Try to infer the correct TOOLPREFIX if not set
+ ifndef TOOLPREFIX
+@@ -172,13 +172,14 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_ps\
+
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+
+ -include *.d
+
+-clean:
++clean:
+ 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
+ 	*.o *.d *.asm *.sym vectors.S bootblock entryother \
+ 	initcode initcode.out kernel xv6.img fs.img kernelmemfs mkfs \
+@@ -241,7 +242,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
+ EXTRA=\
+ 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
+ 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
+-	printf.c umalloc.c\
++	printf.c umalloc.c ps.c\
+ 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+ 	.gdbinit.tmpl gdbutil\
+
+diff --git a/defs.h b/defs.h
+index 34ed633..29194fd 100644
+--- a/defs.h
++++ b/defs.h
+@@ -108,6 +108,7 @@ int             growproc(int);
+ int             kill(int);
+ void            pinit(void);
+ void            procdump(void);
++int             procrunnable(void);
+ void            scheduler(void) __attribute__((noreturn));
+ void            sched(void);
+ void            sleep(void*, struct spinlock*);
+diff --git a/proc.c b/proc.c
+index eee79af..0e8a3a9 100644
+--- a/proc.c
++++ b/proc.c
+@@ -87,7 +87,7 @@ userinit(void)
+   // the lock isn't needed because no other
+   // thread will look at an EMBRYO proc.
+   release(&ptable.lock);
+-
++
+   initproc = p;
+   if((p->pgdir = setupkvm()) == 0)
+     panic("userinit: out of memory?");
+@@ -491,3 +491,16 @@ procdump(void)
+     cprintf("\n");
+   }
+ }
++
++// Print number of runnable process.
++int
++procrunnable(void)
++{
++  struct proc *p;
++  int count = 0;
++  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
++    if(p->state == RUNNABLE)
++      count += 1;
++  }
++  return count;
++}
+diff --git a/syscall.c b/syscall.c
+index 5d3be9d..7bbafa0 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -98,6 +98,7 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_runnable(void);
+
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -121,6 +122,7 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_runnable] sys_runnable,
+ };
+
+ void
+diff --git a/syscall.h b/syscall.h
+index bc5f356..b1babeb 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_runnable 22
+diff --git a/sysproc.c b/sysproc.c
+index 6b585e0..1928c7e 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -43,6 +43,11 @@ sys_getpid(void)
+ }
+
+ int
++sys_runnable(void) {
++  return procrunnable();
++}
++
++int
+ sys_sbrk(void)
+ {
+   int addr;
+diff --git a/user.h b/user.h
+index f45b8d5..398959e 100644
+--- a/user.h
++++ b/user.h
+@@ -20,6 +20,7 @@ int mkdir(char*);
+ int chdir(char*);
+ int dup(int);
+ int getpid(void);
++int runnable(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..e7c6471 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(runnable)
